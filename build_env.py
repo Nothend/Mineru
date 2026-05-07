@@ -14,7 +14,7 @@ MODEL_ROOT = ROOT_DIR / "models"
 
 # 镜像源
 MAIN_INDEX = "https://pypi.tuna.tsinghua.edu.cn/simple"
-EXTRA_INDEX_1 = "https://download.pytorch.org/whl/cu121"
+EXTRA_INDEX_1 = "https://download.pytorch.org/whl/cu124"
 EXTRA_INDEX_2 = "https://pypi.org/simple"
 
 # 核心包 (用于兜底)
@@ -356,6 +356,53 @@ def build_patch_package(config: EnvConfig):
     print(f"{Color.GREEN}====================================================={Color.END}\n")
     input("按任意键退出...")
 
+def download_gpu_torch_logic(config: EnvConfig):
+    """
+    专门针对 MinerU 的 GPU 版 Torch 下载逻辑
+    支持缓存检查、双索引隔离下载及文件大小校验
+    """
+    if config.prefix != "MinERU":
+        return
+
+    wheel_dir = config.WHEEL_DIR
+    wheel_dir.mkdir(parents=True, exist_ok=True)
+    
+    # 1. 缓存检查：寻找大于 1.5GB 的 torch-2.6.0*.whl
+    needs_download = True
+    for whl in wheel_dir.glob("torch-2.6.0*.whl"):
+        if whl.stat().st_size > 1.5 * 1024**3:
+            log_ok(f"检测到有效的 GPU 版 Torch 离线包 ({whl.stat().st_size / 1024**3:.2f} GB)，跳过下载。")
+            needs_download = False
+            break
+            
+    # 2. 执行定向下载
+    if needs_download:
+        log_info("正在通过【官方独占通道】下载 GPU 版 Torch (CUDA 12.4)...")
+        # 定义核心包版本
+        pkgs = ["torch==2.6.0", "torchvision==0.21.0", "torchaudio==2.6.0"]
+        
+        cmd = [
+            sys.executable, "-m", "pip", "download",
+            *pkgs,
+            "--index-url", EXTRA_INDEX_1,               # 强制指向 cu124
+            "--extra-index-url", MAIN_INDEX,            # 备选清华源下载 typing-extensions 等
+            "-d", str(wheel_dir),
+            "--no-cache-dir"
+        ]
+        
+        try:
+            run_cmd(cmd)
+            # 下载后的二次校验
+            downloaded_files = list(wheel_dir.glob("torch-2.6.0*.whl"))
+            if downloaded_files:
+                # 检查列表中的第一个匹配文件
+                if downloaded_files.stat().st_size < 500 * 1024**2:
+                    log_fatal("下载的文件过小，判定为 CPU 版本！请清理目录后重试。")
+                log_ok(f"GPU 版 Torch 下载成功：{downloaded_files.name}")
+            else:
+                log_fatal("未找到下载的 torch 文件。")
+        except Exception as e:
+            log_fatal(f"Torch 隔离下载失败: {e}")
 
 def build_full_package(config: EnvConfig):
     """全量构建逻辑"""
@@ -429,29 +476,41 @@ def build_full_package(config: EnvConfig):
 
     # 下载 GPU Torch
     if config.prefix == "MinERU":
-        # 从 requirements_mineru.txt 中读取 torch 版本
-        torch_version = None
-        torchvision_version = None
-        torchaudio_version = None
-        with open(config.REQ_FILE, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith("torch=="):
-                    torch_version = line.split("==")[1]
-                elif line.startswith("torchvision=="):
-                    torchvision_version = line.split("==")[1]
-                elif line.startswith("torchaudio=="):
-                    torchaudio_version = line.split("==")[1]
-        
-        if torch_version and torchvision_version and torchaudio_version:
-            log_info(f"下载 GPU Torch {torch_version} (cu121)...")
-            run_cmd([python_exe] + download_args + [
-                f"torch=={torch_version}", f"torchvision=={torchvision_version}", f"torchaudio=={torchaudio_version}",
-                "--index-url", "https://download.pytorch.org/whl/cu121",
-                "--no-deps"
-            ])
-        else:
-            log_warn("未能在 requirements_mineru.txt 中找到 torch、torchvision、torchaudio 的版本信息，跳过下载。")
+        wheel_dir = config.WHEEL_DIR
+        # 1. 标志位：默认需要下载
+        needs_download_torch = True
+
+        # 检查本地是否已经有“大文件”缓存 (判断标准：大于 1.5GB)
+        for whl in wheel_dir.glob("torch-2.6.0*.whl"):
+            if whl.stat().st_size > 1.5 * 1024 * 1024 * 1024:
+                log_ok(f"检测到有效的 GPU 版 Torch 离线包 ({whl.stat().st_size / 1024**3:.2f} GB)，跳过下载。")
+                needs_download_torch = False # 修改标志位，不需要下载
+                break # 仅跳出当前的 for 循环，不要 return
+
+        # 3. 只有在找不到有效缓存时，才执行下载
+        if needs_download_torch:
+            log_info("正在通过【官方独占通道】下载 GPU 版 Torch (CUDA 12.4)...")
+            pkgs = ["torch==2.6.0", "torchvision==0.21.0", "torchaudio==2.6.0"]
+            cmd = [
+                sys.executable, "-m", "pip", "download",
+                *pkgs,
+                "--index-url", "https://download.pytorch.org/whl/cu124",
+                "--extra-index-url", "https://pypi.tuna.tsinghua.edu.cn/simple",
+                "-d", str(wheel_dir),
+                "--no-cache-dir"
+            ]
+            try:
+                run_cmd(cmd)
+                # 校验逻辑 (注意：这里用索引 0 获取列表里的第一个文件)
+                downloaded_files = list(wheel_dir.glob("torch-2.6.0*.whl"))
+                if downloaded_files and downloaded_files.stat().st_size < 500 * 1024**2:
+                    log_fatal("下载的文件过小，判定为 CPU 版本！")
+                log_ok("GPU 版 Torch 下载验证通过。")
+            except Exception as e:
+                log_fatal(f"隔离下载失败: {e}")
+
+        # --- 重点：代码运行到这里后，不要 return，它会自动继续往下执行 ---
+        log_info("继续处理 requirements_mineru.txt 中的其他依赖...")
     elif config.prefix == "Paper":
         log_info("下载 GPU Torch 2.1.2 (cu121)...")
         run_cmd([python_exe] + download_args + [
