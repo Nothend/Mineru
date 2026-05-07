@@ -447,7 +447,7 @@ def build_full_package(config: EnvConfig):
             log_info(f"下载 GPU Torch {torch_version} (cu121)...")
             run_cmd([python_exe] + download_args + [
                 f"torch=={torch_version}", f"torchvision=={torchvision_version}", f"torchaudio=={torchaudio_version}",
-                "--index-url", "https://download.pytorch.org/whl/cu121/",
+                "--index-url", "https://download.pytorch.org/whl/cu121",
                 "--no-deps"
             ])
         else:
