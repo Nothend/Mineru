@@ -429,12 +429,29 @@ def build_full_package(config: EnvConfig):
 
     # 下载 GPU Torch
     if config.prefix == "MinERU":
-        log_info("下载 GPU Torch 2.4.1 (cu121)...")
-        run_cmd([python_exe] + download_args + [
-            "torch==2.4.1", "torchvision==0.19.1", "torchaudio==2.4.1",
-            "--index-url", "https://download.pytorch.org/whl/cu121/",
-            "--no-deps"
-        ])
+        # 从 requirements_mineru.txt 中读取 torch 版本
+        torch_version = None
+        torchvision_version = None
+        torchaudio_version = None
+        with open(config.REQ_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("torch=="):
+                    torch_version = line.split("==")[1]
+                elif line.startswith("torchvision=="):
+                    torchvision_version = line.split("==")[1]
+                elif line.startswith("torchaudio=="):
+                    torchaudio_version = line.split("==")[1]
+        
+        if torch_version and torchvision_version and torchaudio_version:
+            log_info(f"下载 GPU Torch {torch_version} (cu121)...")
+            run_cmd([python_exe] + download_args + [
+                f"torch=={torch_version}", f"torchvision=={torchvision_version}", f"torchaudio=={torchaudio_version}",
+                "--index-url", "https://download.pytorch.org/whl/cu121/",
+                "--no-deps"
+            ])
+        else:
+            log_warn("未能在 requirements_mineru.txt 中找到 torch、torchvision、torchaudio 的版本信息，跳过下载。")
     elif config.prefix == "Paper":
         log_info("下载 GPU Torch 2.1.2 (cu121)...")
         run_cmd([python_exe] + download_args + [
