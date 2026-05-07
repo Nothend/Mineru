@@ -1,0 +1,11 @@
+transformers==4.36.2
+accelerate==0.25.0
+safetensors==0.4.1
+huggingface_hub==0.20.3
+sentence-transformers
+chromadb==0.4.22
+fastapi
+uvicorn
+rapidocr_onnxruntime
+numpy<2.0.0
+gradio
